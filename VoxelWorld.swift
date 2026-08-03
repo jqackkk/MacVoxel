@@ -1,7 +1,6 @@
 //
 //  VoxelWorld.swift
 //  Macvoxel
-//  Copyright (c) Jack Davenport 2026. All rights reserved.
 //
 
 import MetalKit
@@ -66,28 +65,38 @@ class Chunk {
         blocks[getIndex(x: x, y: y, z: z)] = type
     }
     
+    enum FaceDirection: Int {
+        case top = 0, bottom = 1, front = 2, back = 3, left = 4, right = 5
+    }
+    
     func buildMesh(device: MTLDevice) {
         var vertices: [Vertex] = []
-        
-        let oneThird: Float = 1.0 / 3.0
-        let twoThirds: Float = 2.0 / 3.0
-        
-        // Define exact 4 corners of each texture to prevent slant (BL, BR, TL, TR)
-        let uvGrass: [SIMD2<Float>]  = [[0, oneThird], [1, oneThird], [0, 0], [1, 0]]
-        let uvDirt: [SIMD2<Float>]   = [[0, twoThirds], [1, twoThirds], [0, oneThird], [1, oneThird]]
-        let uvCobble: [SIMD2<Float>] = [[0, 1], [1, 1], [0, twoThirds], [1, twoThirds]]
         
         let wx = Float(chunkX * Chunk.width)
         let wz = Float(chunkZ * Chunk.depth)
         
-        // Helper func guarantees CCW winding and perfect triangles every time
-        func addFace(v0: SIMD3<Float>, v1: SIMD3<Float>, v2: SIMD3<Float>, v3: SIMD3<Float>, uvs: [SIMD2<Float>]) {
-            vertices.append(Vertex(position: v0, texCoord: uvs[0])) // BL
-            vertices.append(Vertex(position: v1, texCoord: uvs[1])) // BR
-            vertices.append(Vertex(position: v2, texCoord: uvs[2])) // TL
-            vertices.append(Vertex(position: v2, texCoord: uvs[2])) // TL
-            vertices.append(Vertex(position: v1, texCoord: uvs[1])) // BR
-            vertices.append(Vertex(position: v3, texCoord: uvs[3])) // TR
+        func getUVs(for blockType: UInt8, face: FaceDirection) -> [SIMD2<Float>] {
+            let atlasCols: Float = 6.0
+            let atlasRows: Float = 4.0 // INCREASED TO 4 ROWS
+            
+            let row = Float(blockType - 1)
+            let col = Float(face.rawValue)
+            
+            let startX = col / atlasCols
+            let endX = (col + 1) / atlasCols
+            let startY = row / atlasRows
+            let endY = (row + 1) / atlasRows
+            
+            return [ [startX, endY], [endX, endY], [startX, startY], [endX, startY] ]
+        }
+        
+        func addFace(v0: SIMD3<Float>, v1: SIMD3<Float>, v2: SIMD3<Float>, v3: SIMD3<Float>, uvs: [SIMD2<Float>], normal: SIMD3<Float>) {
+            vertices.append(Vertex(position: v0, texCoord: uvs[0], normal: normal))
+            vertices.append(Vertex(position: v1, texCoord: uvs[1], normal: normal))
+            vertices.append(Vertex(position: v2, texCoord: uvs[2], normal: normal))
+            vertices.append(Vertex(position: v2, texCoord: uvs[2], normal: normal))
+            vertices.append(Vertex(position: v1, texCoord: uvs[1], normal: normal))
+            vertices.append(Vertex(position: v3, texCoord: uvs[3], normal: normal))
         }
         
         for x in 0..<Chunk.width {
@@ -100,32 +109,23 @@ class Chunk {
                     let pY = Float(y)
                     let pZ = Float(z) + wz
                     
-                    let uvs = (type == BlockType.grass.rawValue) ? uvGrass : (type == BlockType.cobblestone.rawValue ? uvCobble : uvDirt)
-                    let sideUvs = (type == BlockType.cobblestone.rawValue) ? uvCobble : uvDirt
-                    
-                    // Top Face (+Y)
                     if getBlock(x: x, y: y + 1, z: z) == 0 {
-                        addFace(v0: [pX, pY+1, pZ+1], v1: [pX+1, pY+1, pZ+1], v2: [pX, pY+1, pZ], v3: [pX+1, pY+1, pZ], uvs: uvs)
+                        addFace(v0: [pX, pY+1, pZ+1], v1: [pX+1, pY+1, pZ+1], v2: [pX, pY+1, pZ], v3: [pX+1, pY+1, pZ], uvs: getUVs(for: type, face: .top), normal: [0, 1, 0])
                     }
-                    // Bottom Face (-Y)
                     if getBlock(x: x, y: y - 1, z: z) == 0 {
-                        addFace(v0: [pX, pY, pZ], v1: [pX+1, pY, pZ], v2: [pX, pY, pZ+1], v3: [pX+1, pY, pZ+1], uvs: sideUvs)
+                        addFace(v0: [pX, pY, pZ], v1: [pX+1, pY, pZ], v2: [pX, pY, pZ+1], v3: [pX+1, pY, pZ+1], uvs: getUVs(for: type, face: .bottom), normal: [0, -1, 0])
                     }
-                    // Front Face (+Z)
                     if getBlock(x: x, y: y, z: z + 1) == 0 {
-                        addFace(v0: [pX, pY, pZ+1], v1: [pX+1, pY, pZ+1], v2: [pX, pY+1, pZ+1], v3: [pX+1, pY+1, pZ+1], uvs: sideUvs)
+                        addFace(v0: [pX, pY, pZ+1], v1: [pX+1, pY, pZ+1], v2: [pX, pY+1, pZ+1], v3: [pX+1, pY+1, pZ+1], uvs: getUVs(for: type, face: .front), normal: [0, 0, 1])
                     }
-                    // Back Face (-Z)
                     if getBlock(x: x, y: y, z: z - 1) == 0 {
-                        addFace(v0: [pX+1, pY, pZ], v1: [pX, pY, pZ], v2: [pX+1, pY+1, pZ], v3: [pX, pY+1, pZ], uvs: sideUvs)
+                        addFace(v0: [pX+1, pY, pZ], v1: [pX, pY, pZ], v2: [pX+1, pY+1, pZ], v3: [pX, pY+1, pZ], uvs: getUVs(for: type, face: .back), normal: [0, 0, -1])
                     }
-                    // Right Face (+X)
                     if getBlock(x: x + 1, y: y, z: z) == 0 {
-                        addFace(v0: [pX+1, pY, pZ+1], v1: [pX+1, pY, pZ], v2: [pX+1, pY+1, pZ+1], v3: [pX+1, pY+1, pZ], uvs: sideUvs)
+                        addFace(v0: [pX+1, pY, pZ+1], v1: [pX+1, pY, pZ], v2: [pX+1, pY+1, pZ+1], v3: [pX+1, pY+1, pZ], uvs: getUVs(for: type, face: .right), normal: [1, 0, 0])
                     }
-                    // Left Face (-X)
                     if getBlock(x: x - 1, y: y, z: z) == 0 {
-                        addFace(v0: [pX, pY, pZ], v1: [pX, pY, pZ+1], v2: [pX, pY+1, pZ], v3: [pX, pY+1, pZ+1], uvs: sideUvs)
+                        addFace(v0: [pX, pY, pZ], v1: [pX, pY, pZ+1], v2: [pX, pY+1, pZ], v3: [pX, pY+1, pZ+1], uvs: getUVs(for: type, face: .left), normal: [-1, 0, 0])
                     }
                 }
             }
