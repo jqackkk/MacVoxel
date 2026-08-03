@@ -80,7 +80,7 @@ func smoothNoise(x: Float, z: Float) -> Float {
     let fractionalZ = z - floor(z)
     
     func randomHash(_ ix: Int, _ iz: Int) -> Float {
-        var h = Float(ix) * 37.0 + Float(iz) * 109.0
+        let h = Float(ix) * 37.0 + Float(iz) * 109.0
         return abs(h.truncatingRemainder(dividingBy: 43758.5453) / 43758.5453)
     }
     

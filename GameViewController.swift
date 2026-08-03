@@ -7,7 +7,6 @@ import Cocoa
 import MetalKit
 
 class GameView: MTKView {
-    // This tells macOS that this view wants to receive keyboard and mouse events
     override var acceptsFirstResponder: Bool { return true }
 }
 
@@ -16,6 +15,12 @@ class GameViewController: NSViewController {
     var mtkView: MTKView!
     var renderer: Renderer!
     var pauseMenuContainer: NSView!
+    
+    // Hotbar Variables
+    var hotbarStack: NSStackView!
+    var hotbarSlotViews: [NSView] = []
+    let hotbarBlocks: [BlockType] = [.grass, .dirt, .cobblestone, .air, .air, .air, .air, .air, .air]
+    var selectedHotbarSlot = 0
     
     override var acceptsFirstResponder: Bool { return true }
 
@@ -28,7 +33,6 @@ class GameViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         self.view.window?.makeFirstResponder(mtkView)
-        // This tells the window to report mouse movement even when not clicking
         self.view.window?.acceptsMouseMovedEvents = true
     }
 
@@ -44,11 +48,106 @@ class GameViewController: NSViewController {
         self.renderer = newRenderer
         self.mtkView.delegate = self.renderer
         
+        setupHotbar()
         setupPauseMenu()
         lockMouse()
     }
     
     // MARK: - UI Setup
+    private func getTextureSlice(for block: BlockType) -> CGImage? {
+        // FIXED: Do not draw any icons for empty air slots
+        if block == .air { return nil } 
+        
+        guard let atlasImage = NSImage(named: "TextureAtlas"),
+              let cgImage = atlasImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return nil
+        }
+        
+        // Image is 6 columns wide, 4 rows tall
+        let colWidth = cgImage.width / 6
+        let rowHeight = cgImage.height / 4
+        
+        // FIXED: Subtract 1 so Grass (ID 1) perfectly maps to Row 0!
+        let blockIndex = Int(block.rawValue) - 1
+        
+        // We want the Front face for the UI (Column Index 2)
+        let cropRect = CGRect(x: colWidth * 2, y: rowHeight * blockIndex, width: colWidth, height: rowHeight)
+        return cgImage.cropping(to: cropRect)
+    }
+    
+    private func setupHotbar() {
+        hotbarStack = NSStackView()
+        hotbarStack.orientation = .horizontal
+        hotbarStack.spacing = 5
+        hotbarStack.translatesAutoresizingMaskIntoConstraints = false
+        self.view.addSubview(hotbarStack)
+        
+        NSLayoutConstraint.activate([
+            hotbarStack.centerXAnchor.constraint(equalTo: self.view.centerXAnchor),
+            hotbarStack.bottomAnchor.constraint(equalTo: self.view.bottomAnchor, constant: -20)
+        ])
+        
+        for i in 0..<9 {
+            let slotView = NSView()
+            slotView.translatesAutoresizingMaskIntoConstraints = false
+            slotView.wantsLayer = true
+            slotView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.4).cgColor
+            slotView.layer?.borderWidth = 2
+            slotView.layer?.cornerRadius = 4
+            
+            NSLayoutConstraint.activate([
+                slotView.widthAnchor.constraint(equalToConstant: 44),
+                slotView.heightAnchor.constraint(equalToConstant: 44)
+            ])
+            
+            let block = hotbarBlocks[i]
+            if let blockImage = getTextureSlice(for: block) {
+                let imageLayer = CALayer()
+                imageLayer.contents = blockImage
+                imageLayer.magnificationFilter = .nearest
+                imageLayer.frame = CGRect(x: 4, y: 4, width: 36, height: 36)
+                slotView.layer?.addSublayer(imageLayer)
+            }
+            
+            let label = NSTextField(labelWithString: "\(i+1)")
+            label.font = NSFont.boldSystemFont(ofSize: 12)
+            label.textColor = .white
+            label.isBordered = false
+            label.isEditable = false
+            label.drawsBackground = false
+            label.translatesAutoresizingMaskIntoConstraints = false
+            
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black
+            shadow.shadowOffset = NSSize(width: 1, height: -1)
+            shadow.shadowBlurRadius = 2
+            label.shadow = shadow
+            
+            slotView.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: slotView.leadingAnchor, constant: 4),
+                label.topAnchor.constraint(equalTo: slotView.topAnchor, constant: 4)
+            ])
+            
+            hotbarSlotViews.append(slotView)
+            hotbarStack.addArrangedSubview(slotView)
+        }
+        updateHotbarSelection()
+    }
+    
+    private func updateHotbarSelection() {
+        for (index, view) in hotbarSlotViews.enumerated() {
+            if index == selectedHotbarSlot {
+                view.layer?.borderColor = NSColor.white.cgColor
+                view.layer?.borderWidth = 4
+                renderer.activeBlockType = hotbarBlocks[index].rawValue
+            } else {
+                view.layer?.borderColor = NSColor.darkGray.cgColor
+                view.layer?.borderWidth = 2
+            }
+        }
+    }
+    
     var mainPauseStack: NSStackView!
     var optionsPauseStack: NSStackView!
     var sensitivityLabel: NSTextField!
@@ -61,7 +160,6 @@ class GameViewController: NSViewController {
         pauseMenuContainer.isHidden = true
         self.view.addSubview(pauseMenuContainer)
         
-        // --- Main Menu Stack ---
         mainPauseStack = NSStackView()
         mainPauseStack.orientation = .vertical
         mainPauseStack.alignment = .centerX
@@ -71,6 +169,9 @@ class GameViewController: NSViewController {
         let titleLabel = NSTextField(labelWithString: "Game Paused")
         titleLabel.font = NSFont.boldSystemFont(ofSize: 24)
         titleLabel.textColor = .white
+        titleLabel.isBordered = false
+        titleLabel.isEditable = false
+        titleLabel.drawsBackground = false
         
         let resumeButton = NSButton(title: "Resume Game", target: self, action: #selector(resumeClicked))
         let optionsButton = NSButton(title: "Options", target: self, action: #selector(optionsClicked))
@@ -82,7 +183,6 @@ class GameViewController: NSViewController {
         mainPauseStack.addArrangedSubview(quitButton)
         pauseMenuContainer.addSubview(mainPauseStack)
         
-        // --- Options Menu Stack ---
         optionsPauseStack = NSStackView()
         optionsPauseStack.orientation = .vertical
         optionsPauseStack.alignment = .centerX
@@ -93,9 +193,15 @@ class GameViewController: NSViewController {
         let optionsTitleLabel = NSTextField(labelWithString: "Options")
         optionsTitleLabel.font = NSFont.boldSystemFont(ofSize: 24)
         optionsTitleLabel.textColor = .white
+        optionsTitleLabel.isBordered = false
+        optionsTitleLabel.isEditable = false
+        optionsTitleLabel.drawsBackground = false
         
         sensitivityLabel = NSTextField(labelWithString: "Mouse Sensitivity: 0.005")
         sensitivityLabel.textColor = .white
+        sensitivityLabel.isBordered = false
+        sensitivityLabel.isEditable = false
+        sensitivityLabel.drawsBackground = false
         
         let sensitivitySlider = NSSlider(value: 0.005, minValue: 0.001, maxValue: 0.02, target: self, action: #selector(sensitivityChanged(_:)))
         sensitivitySlider.isContinuous = true
@@ -115,7 +221,6 @@ class GameViewController: NSViewController {
         ])
     }
     
-    // MARK: - UI Actions
     @objc func resumeClicked() { togglePause() }
     @objc func optionsClicked() { mainPauseStack.isHidden = true; optionsPauseStack.isHidden = false }
     @objc func backClicked() { optionsPauseStack.isHidden = true; mainPauseStack.isHidden = false }
@@ -125,16 +230,11 @@ class GameViewController: NSViewController {
         sensitivityLabel.stringValue = String(format: "Mouse Sensitivity: %.4f", sender.floatValue)
     }
     
-    // MARK: - Input Handling & Pausing
     var isPaused: Bool = false
     var clickMonitor: Any?
     
     @objc func togglePause() {
-        if isPaused {
-            lockMouse()
-        } else {
-            unlockMouse()
-        }
+        if isPaused { lockMouse() } else { unlockMouse() }
     }
     
     private func lockMouse() {
@@ -144,16 +244,18 @@ class GameViewController: NSViewController {
         pauseMenuContainer.isHidden = true
         self.view.window?.makeFirstResponder(mtkView)
         
-        // Click capturing
         if clickMonitor == nil {
-            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown]) { [weak self] event in
                 guard let self = self, !self.isPaused else { return event }
+                
                 if event.type == .leftMouseDown {
-                    print("Left Click!")
-                    self.renderer.interact(breakBlock: true)
+                    self.renderer.isBreaking = true
+                } else if event.type == .leftMouseUp {
+                    self.renderer.isBreaking = false
+                    self.renderer.breakProgress = 0.0
+                    self.renderer.breakingBlockPosition = nil
                 } else if event.type == .rightMouseDown {
-                    print("Right Click!")
-                    self.renderer.interact(breakBlock: false)
+                    self.renderer.interact()
                 }
                 return nil
             }
@@ -169,6 +271,10 @@ class GameViewController: NSViewController {
         pauseMenuContainer.isHidden = false
         renderer.keysPressed.removeAll()
         
+        renderer.isBreaking = false
+        renderer.breakProgress = 0.0
+        renderer.breakingBlockPosition = nil
+        
         if let monitor = clickMonitor {
             NSEvent.removeMonitor(monitor)
             clickMonitor = nil
@@ -176,36 +282,32 @@ class GameViewController: NSViewController {
     }
     
     // MARK: - Keyboard & Mouse Events
-    
-    // WASD Movement
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        return true
-    }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool { return true }
     
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // ESC Key
-            togglePause()
+        if event.keyCode == 53 { togglePause(); return }
+        
+        if let chars = event.charactersIgnoringModifiers, let num = Int(chars), num >= 1 && num <= 9 {
+            selectedHotbarSlot = num - 1
+            updateHotbarSelection()
             return
         }
-        if !isPaused {
-            renderer.keysPressed.insert(event.keyCode)
-        }
+        if !isPaused { renderer.keysPressed.insert(event.keyCode) }
     }
     
-    override func keyUp(with event: NSEvent) {
-        renderer.keysPressed.remove(event.keyCode)
-    }
+    override func keyUp(with event: NSEvent) { renderer.keysPressed.remove(event.keyCode) }
     
     override func mouseMoved(with event: NSEvent) {
         if !isPaused {
             renderer.cameraYaw += Float(event.deltaX) * renderer.mouseSensitivity
-            // INVERTED Y-AXIS: Swiping down looks up
             renderer.cameraPitch -= Float(event.deltaY) * renderer.mouseSensitivity
             
-            // Prevent camera from flipping upside down
             let limit = Float.pi / 2.0 - 0.01
             if renderer.cameraPitch > limit { renderer.cameraPitch = limit }
             if renderer.cameraPitch < -limit { renderer.cameraPitch = -limit }
         }
     }
+    
+    override func mouseDragged(with event: NSEvent) { mouseMoved(with: event) }
+    override func rightMouseDragged(with event: NSEvent) { mouseMoved(with: event) }
 }
